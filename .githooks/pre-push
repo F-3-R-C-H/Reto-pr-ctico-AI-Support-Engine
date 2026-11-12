@@ -1,0 +1,17 @@
+#!/bin/sh
+current_branch=$(git symbolic-ref HEAD 2>/dev/null | sed -e 's,.*/\(.*\),\1,')
+
+if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+  echo ""
+  echo "❌ [BLOQUEADO] Está prohibido hacer 'git push' directo a la rama '$current_branch'."
+  echo "👉 Por favor trabaja en tu rama asignada:"
+  echo "   - Fernando:  feat/fernando-generative"
+  echo "   - Danna:     feat/danna-traditional"
+  echo "   - Tonantzin: feat/tonantzin-api"
+  echo "   Sube tus cambios con: git push -u origin <tu-rama>"
+  echo "   Luego abre un Pull Request en GitHub para que otro integrante lo apruebe."
+  echo ""
+  exit 1
+fi
+
+exit 0
