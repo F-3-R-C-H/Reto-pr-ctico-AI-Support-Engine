@@ -2,7 +2,10 @@
 
 Prototipo de clasificación inteligente de solicitudes de soporte con dos motores: **tradicional** (reglas) y **generativo** (Gemini API).
 
-**Equipo:** Fernando Vázquez, Danna Tobon y Tonantzin Valentin.
+**Equipo:**
+Fernando Vazquez Valeriano
+Danna Tobon Mosqueda 
+Tonantzin Valentin Hernandez
 
 ## Requisitos
 - Node.js 18 o superior
