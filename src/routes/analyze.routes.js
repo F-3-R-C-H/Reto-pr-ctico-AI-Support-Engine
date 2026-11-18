@@ -13,7 +13,10 @@ const ENGINE_FILES = {
 
 function loadEngine(mode) {
   const mod = require(ENGINE_FILES[mode]);
-  const fn = typeof mod === 'function' ? mod : mod.analyze;
+  const fn =
+    typeof mod === 'function'
+      ? mod
+      : mod.analyze || mod.analyzeTraditional || mod.analyzeGenerative;
   if (typeof fn !== 'function') {
     const err = new Error(`El motor "${mode}" no exporta una función analyze`);
     err.code = 'ENGINE_NOT_IMPLEMENTED';

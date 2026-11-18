@@ -104,6 +104,47 @@ Respuesta obtenida (`200 OK`):
   "mode": "generative"
 }
 ```
+### Validaciones (Requerimiento 4)
+Petición inválida (`mode` fuera de `traditional` / `generative`) a `POST /api/analyze`:
+```json
+{
+  "message": "No puedo iniciar sesión",
+  "mode": "hibrido"
+}
+```
+Respuesta obtenida (`400 Bad Request`):
+```json
+{
+  "error": "Solicitud inválida",
+  "details": ["\"mode\" debe ser uno de: traditional, generative"]
+}
+```
+
+Petición inválida (`message` vacío):
+```json
+{
+  "message": "",
+  "mode": "generative"
+}
+```
+Respuesta obtenida (`400 Bad Request`):
+```json
+{
+  "error": "Solicitud inválida",
+  "details": ["\"message\" no puede estar vacío"]
+}
+```
+
+Regla dura `SECURITY` => `requiresHumanReview: true` (petición con `"mode": "traditional"` y mensaje *"Hubo una fuga de datos y una contraseña expuesta en el sistema."*), respuesta `200 OK`:
+```json
+{
+  "category": "SECURITY",
+  "priority": "CRITICAL",
+  "response": "Hemos registrado un incidente crítico de seguridad. Será revisado de inmediato por una persona del equipo responsable; no comparta ni exponga contraseñas o información confidencial.",
+  "requiresHumanReview": true,
+  "mode": "traditional"
+}
+```
 
 ## Resultados comparativos
 
