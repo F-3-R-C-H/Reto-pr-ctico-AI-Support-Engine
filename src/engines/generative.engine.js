@@ -23,6 +23,13 @@ const VALID_CATEGORIES = ['ACCESS', 'BUG', 'FEATURE', 'SECURITY'];
 const VALID_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 const DEFAULT_TIMEOUT_MS = 25000;
 const MAX_RETRIES = 2;
+const FALLBACK_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+];
+let resolvedModelCache = null;
 
 /**
  * Patrones de detección de Prompt Injection e incidentes críticos de seguridad (Defensa en Profundidad).
@@ -340,6 +347,98 @@ async function callGeminiModel(userMessage, apiKey, modelName) {
 }
 
 /**
+ * Verifica si un error corresponde a un modelo no encontrado o descontinuado (HTTP 404)
+ * @param {Error} err
+ * @returns {boolean}
+ */
+function isModelNotFoundError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    err.status === 404 ||
+    msg.includes('404') ||
+    msg.includes('not found') ||
+    msg.includes('not_found') ||
+    msg.includes('deprecated') ||
+    msg.includes('is not supported for generatecontent')
+  );
+}
+
+/**
+ * Consulta dinámicamente la lista de modelos activos en Google Gemini API si los nombres
+ * estáticos devuelven 404 por actualización o descontinuación de versión.
+ * @param {string} apiKey
+ * @returns {Promise<string|null>}
+ */
+async function discoverActiveGeminiModel(apiKey) {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const generateModels = models
+      .filter(
+        (m) =>
+          Array.isArray(m.supportedGenerationMethods) &&
+          m.supportedGenerationMethods.includes('generateContent') &&
+          typeof m.name === 'string'
+      )
+      .map((m) => m.name.replace(/^models\//, ''));
+
+    // Preferir modelos flash vigentes
+    const flashModel = generateModels.find((name) => name.includes('flash'));
+    return flashModel || generateModels[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Invoca a Gemini probando primero el modelo configurado (ej. gemini-3.5-flash o gemini-2.5-flash)
+ * y haciendo fallback automático si una versión fue descontinuada o no está disponible en la cuenta.
+ *
+ * @param {string} userMessage
+ * @param {string} apiKey
+ * @param {string} preferredModel
+ * @returns {Promise<string>}
+ */
+async function callGeminiWithFallback(userMessage, apiKey, preferredModel) {
+  const candidates = [
+    ...(resolvedModelCache ? [resolvedModelCache] : []),
+    preferredModel,
+    ...FALLBACK_MODELS,
+  ].filter((m, idx, arr) => Boolean(m) && arr.indexOf(m) === idx);
+
+  let lastError = null;
+
+  for (const candidateModel of candidates) {
+    try {
+      const responseText = await callGeminiModel(userMessage, apiKey, candidateModel);
+      resolvedModelCache = candidateModel;
+      return responseText;
+    } catch (err) {
+      lastError = err;
+      if (isModelNotFoundError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  // Último recurso: autodescubrimiento directo desde el endpoint /v1beta/models
+  const discovered = await discoverActiveGeminiModel(apiKey);
+  if (discovered && !candidates.includes(discovered)) {
+    const responseText = await callGeminiModel(userMessage, apiKey, discovered);
+    resolvedModelCache = discovered;
+    return responseText;
+  }
+
+  throw lastError;
+}
+
+/**
  * Función principal del Motor Generativo.
  * Soporta recibir directamente el string `message` o un objeto `{ message }`.
  *
@@ -377,10 +476,14 @@ async function analyzeGenerative(input) {
     throw error;
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const preferredModel = (process.env.GEMINI_MODEL || 'gemini-3.5-flash').trim();
 
   try {
-    const rawJsonText = await callGeminiModel(message.trim(), apiKey.trim(), modelName);
+    const rawJsonText = await callGeminiWithFallback(
+      message.trim(),
+      apiKey.trim(),
+      preferredModel
+    );
     const parsed = parseModelJson(rawJsonText);
     return normalizeOutput(parsed, message.trim());
   } catch (err) {
