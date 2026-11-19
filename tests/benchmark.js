@@ -24,6 +24,7 @@ const fs = require('fs');
 
 const { analyzeTraditional } = require('../src/engines/traditional.engine');
 const analyzeGenerative = require('../src/engines/generative.engine');
+const { analyzeML, getMLModelReport } = require('../src/engines/ml.engine');
 const { validateEngineOutput } = require('../src/utils/validator');
 
 const testCasesPath = path.join(__dirname, 'test-cases.json');
@@ -75,10 +76,13 @@ async function runBenchmark() {
 
   const results = [];
   let tradCorrect = 0;
+  let mlCorrect = 0;
   let genCorrect = 0;
   let tradCategoryCorrect = 0;
+  let mlCategoryCorrect = 0;
   let genCategoryCorrect = 0;
   let tradFormatOk = 0;
+  let mlFormatOk = 0;
   let genFormatOk = 0;
 
   for (let i = 0; i < cases.length; i++) {
@@ -110,7 +114,32 @@ async function runBenchmark() {
     );
     if (tradMatch) tradCorrect++;
 
-    // 2. Ejecutar Motor Generativo
+    // 2. Ejecutar Motor Machine Learning (TF-IDF + LogisticRegression)
+    let mlResult = null;
+    let mlError = null;
+    const t0Ml = Date.now();
+    try {
+      mlResult = await analyzeML(message);
+    } catch (err) {
+      mlError = err.message;
+    }
+    const mlLatencyMs = Date.now() - t0Ml;
+
+    const mlFmt = mlResult ? checkFormat(mlResult, 'ml') : false;
+    if (mlFmt) mlFormatOk++;
+
+    const mlCatMatch = Boolean(mlResult && mlResult.category === expected.category);
+    if (mlCatMatch) mlCategoryCorrect++;
+
+    const mlMatch = Boolean(
+      mlResult &&
+        mlResult.category === expected.category &&
+        mlResult.priority === expected.priority &&
+        mlResult.requiresHumanReview === expected.requiresHumanReview
+    );
+    if (mlMatch) mlCorrect++;
+
+    // 3. Ejecutar Motor Generativo
     let genResult = null;
     let genError = null;
     const t0Gen = Date.now();
@@ -148,6 +177,14 @@ async function runBenchmark() {
         latencyMs: tradLatencyMs,
         error: tradError,
       },
+      ml: {
+        result: mlResult,
+        formatValid: mlFmt,
+        categoryCorrect: mlCatMatch,
+        exactCorrect: mlMatch,
+        latencyMs: mlLatencyMs,
+        error: mlError,
+      },
       generative: {
         result: genResult,
         formatValid: genFmt,
@@ -159,6 +196,7 @@ async function runBenchmark() {
     });
 
     const statusTrad = tradMatch ? '✅ CORRECTO' : '❌ DIFERENTE';
+    const statusMl = mlMatch ? '✅ CORRECTO' : mlError ? '⚠️ ERROR ML' : '❌ DIFERENTE';
     const statusGen = genMatch ? '✅ CORRECTO' : genError ? '⚠️ ERROR API' : '❌ DIFERENTE';
 
     console.log(`[${String(i + 1).padStart(2, '0')}/${cases.length}] ${id} (${type})`);
@@ -168,6 +206,9 @@ async function runBenchmark() {
     );
     console.log(
       `     Tradicional: [${tradResult?.category || 'N/A'} | ${tradResult?.priority || 'N/A'} | fmt:${tradFmt ? 'OK' : 'NO'}] (${tradLatencyMs}ms) -> ${statusTrad}`
+    );
+    console.log(
+      `     Motor ML:    [${mlResult?.category || 'N/A'} | ${mlResult?.priority || 'N/A'} | fmt:${mlFmt ? 'OK' : 'NO'}] (${mlLatencyMs}ms) -> ${statusMl}`
     );
     console.log(
       `     Generativo:  [${genResult?.category || 'N/A'} | ${genResult?.priority || 'N/A'} | fmt:${genFmt ? 'OK' : 'NO'}] (${genLatencyMs}ms) -> ${statusGen}`
@@ -186,18 +227,26 @@ async function runBenchmark() {
   }
 
   const tradAccuracy = ((tradCorrect / cases.length) * 100).toFixed(2);
+  const mlAccuracy = ((mlCorrect / cases.length) * 100).toFixed(2);
   const genAccuracy = ((genCorrect / cases.length) * 100).toFixed(2);
   const tradCatAccuracy = ((tradCategoryCorrect / cases.length) * 100).toFixed(2);
+  const mlCatAccuracy = ((mlCategoryCorrect / cases.length) * 100).toFixed(2);
   const genCatAccuracy = ((genCategoryCorrect / cases.length) * 100).toFixed(2);
+  const mlReport = getMLModelReport();
 
   console.log('='.repeat(84));
+  console.log('  REPORTE DE ENTRENAMIENTO ML (tickets.csv - 80% Train / 20% Test)');
+  console.log('='.repeat(84));
+  console.log(mlReport.classificationReport);
+
+  console.log('\n' + '='.repeat(84));
   console.log('  TABLA COMPARATIVA DE RESULTADOS (MARKDOWN)');
   console.log('='.repeat(84));
   console.log(
-    '| # | Caso (Tipo) | Referencia (Cat / Prio) | Motor Tradicional | Formato Trad. | Correcto Trad. | Motor Generativo | Formato Gen. | Correcto Gen. |'
+    '| # | Caso (Tipo) | Referencia (Cat / Prio) | Motor Tradicional | Correcto Trad. | Motor ML (CSV) | Correcto ML | Motor Generativo | Correcto Gen. |'
   );
   console.log(
-    '| :--- | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :---: |'
+    '| :--- | :--- | :--- | :--- | :---: | :--- | :---: | :--- | :---: |'
   );
 
   results.forEach((r, idx) => {
@@ -205,26 +254,35 @@ async function runBenchmark() {
     const tradStr = r.traditional.result
       ? `\`${r.traditional.result.category}\` / \`${r.traditional.result.priority}\``
       : 'Error';
+    const mlStr = r.ml.result
+      ? `\`${r.ml.result.category}\` / \`${r.ml.result.priority}\``
+      : 'Error';
     const genStr = r.generative.result
       ? `\`${r.generative.result.category}\` / \`${r.generative.result.priority}\``
       : 'Sin API Key / Error';
 
     console.log(
       `| ${idx + 1} | \`${r.id}\` (${r.type}) | ${refStr} | ${tradStr} | ${
-        r.traditional.formatValid ? 'Sí ✅' : 'No ❌'
-      } | ${r.traditional.exactCorrect ? 'Sí ✅' : 'No ❌'} | ${genStr} | ${
-        r.generative.formatValid ? 'Sí ✅' : 'No ❌'
-      } | ${r.generative.exactCorrect ? 'Sí ✅' : 'No ❌'} |`
+        r.traditional.exactCorrect ? 'Sí ✅' : 'No ❌'
+      } | ${mlStr} | ${
+        r.ml.exactCorrect ? 'Sí ✅' : 'No ❌'
+      } | ${genStr} | ${
+        r.generative.exactCorrect ? 'Sí ✅' : 'No ❌'
+      } |`
     );
   });
 
   console.log('\n' + '='.repeat(84));
   console.log('  RESUMEN DE MÉTRICAS Y EXACTITUD');
   console.log('='.repeat(84));
-  console.log('Motor Tradicional:');
+  console.log('Motor Tradicional (Reglas):');
   console.log(`  - Exactitud por Categoría:              ${tradCategoryCorrect}/${cases.length} (${tradCatAccuracy}%)`);
   console.log(`  - Exactitud Total (Cat + Prio + Rev):   ${tradCorrect}/${cases.length} (${tradAccuracy}%)`);
   console.log(`  - Cumplimiento de Contrato JSON:        ${tradFormatOk}/${cases.length} (${((tradFormatOk / cases.length) * 100).toFixed(2)}%)`);
+  console.log('\nMotor Machine Learning (tickets.csv + TF-IDF + LogisticRegression):');
+  console.log(`  - Exactitud por Categoría:              ${mlCategoryCorrect}/${cases.length} (${mlCatAccuracy}%)`);
+  console.log(`  - Exactitud Total (Cat + Prio + Rev):   ${mlCorrect}/${cases.length} (${mlAccuracy}%)`);
+  console.log(`  - Cumplimiento de Contrato JSON:        ${mlFormatOk}/${cases.length} (${((mlFormatOk / cases.length) * 100).toFixed(2)}%)`);
   console.log('\nMotor Generativo (Gemini API):');
   console.log(`  - Exactitud por Categoría:              ${genCategoryCorrect}/${cases.length} (${genCatAccuracy}%)`);
   console.log(`  - Exactitud Total (Cat + Prio + Rev):   ${genCorrect}/${cases.length} (${genAccuracy}%)`);
@@ -234,8 +292,10 @@ async function runBenchmark() {
   return {
     total: cases.length,
     tradCorrect,
+    mlCorrect,
     genCorrect,
     tradAccuracy,
+    mlAccuracy,
     genAccuracy,
     results,
   };
