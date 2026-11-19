@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "benchmark": "node tests/benchmark.js"
+    "benchmark": "node tests/benchmark.js",
+    "train:ml": "node src/engines/ml.engine.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
