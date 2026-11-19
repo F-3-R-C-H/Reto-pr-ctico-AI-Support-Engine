@@ -9,6 +9,7 @@ const router = express.Router();
 const ENGINE_FILES = {
   traditional: '../engines/traditional.engine',
   generative: '../engines/generative.engine',
+  ml: '../engines/ml.engine',
 };
 
 function loadEngine(mode) {
@@ -16,7 +17,7 @@ function loadEngine(mode) {
   const fn =
     typeof mod === 'function'
       ? mod
-      : mod.analyze || mod.analyzeTraditional || mod.analyzeGenerative;
+      : mod.analyze || mod.analyzeTraditional || mod.analyzeGenerative || mod.analyzeML;
   if (typeof fn !== 'function') {
     const err = new Error(`El motor "${mode}" no exporta una función analyze`);
     err.code = 'ENGINE_NOT_IMPLEMENTED';
@@ -24,6 +25,16 @@ function loadEngine(mode) {
   }
   return fn;
 }
+
+router.get('/ml-report', (_req, res) => {
+  try {
+    const { getMLModelReport } = require('../engines/ml.engine');
+    return res.status(200).json(getMLModelReport());
+  } catch (err) {
+    console.error('[ml-report] Error al obtener reporte ML:', err.message);
+    return res.status(500).json({ error: 'No se pudo generar el reporte del modelo ML' });
+  }
+});
 
 router.post('/analyze', async (req, res) => {
   const validation = validateRequest(req.body);
