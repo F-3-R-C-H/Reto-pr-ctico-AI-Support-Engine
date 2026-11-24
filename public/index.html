@@ -127,6 +127,7 @@
     <label for="exampleSelect">Cargar mensaje de ejemplo (opcional):</label>
     <select id="exampleSelect">
       <option value="">-- Escribir mensaje manualmente --</option>
+      <option value="Encontré datos de otros clientes">[EJEMPLO PROFE] Encontré datos de otros clientes</option>
       <option value="Olvidé mi contraseña y no puedo iniciar sesión en mi cuenta.">[ACCESS] Olvidé mi contraseña y no puedo iniciar sesión en mi cuenta.</option>
       <option value="Aparece un error cada vez que intento guardar una factura.">[BUG] Aparece un error cada vez que intento guardar una factura.</option>
       <option value="Me gustaría agregar un botón azul y cambiar el color del menú.">[FEATURE] Me gustaría agregar un botón azul y cambiar el color del menú.</option>
@@ -262,14 +263,27 @@
       mlReportSection.style.display = 'block';
       mlReportOutput.textContent = 'Cargando métricas del modelo ML...';
       try {
-        const res = await fetch('/api/ml-report');
+        const currentMsg = messageInput.value.trim();
+        const url = currentMsg
+          ? '/api/ml-report?message=' + encodeURIComponent(currentMsg)
+          : '/api/ml-report';
+        const res = await fetch(url);
         const info = await res.json();
         mlReportOutput.textContent =
           'Archivo: ' + info.datasetFile + '\n' +
-          'Total filas: ' + info.datasetSize + ' (Entrenamiento 80%: ' + info.trainSize + ' | Prueba 20%: ' + info.testSize + ')\n' +
+          'Total filas: ' + info.datasetSize + ' (Entrenamiento 80%: ' + info.trainSize + ' | Evaluación 20%: ' + info.testSize + ')\n' +
           'Vocabulario TF-IDF (ngram_range 1..2): ' + info.vocabSize + ' términos\n' +
+          'Clases (model.classes_): [' + (info.classes || []).join(', ') + ']\n' +
           'Distribución por categoría: ' + JSON.stringify(info.classCounts) + '\n\n' +
-          info.classificationReport;
+          '1) classification_report(y_test, predictions, zero_division=0):\n' +
+          info.classificationReport + '\n\n' +
+          '2) confusion_matrix(y_test, predictions, labels=model.classes_):\n' +
+          info.confusionMatrixText + '\n\n' +
+          info.confusionMatrixTable + '\n\n' +
+          '3) Predicción con score de confianza (predict_proba.max()):\n' +
+          'new_message = ["' + info.samplePrediction.message + '"]\n' +
+          'Categoría: ' + info.samplePrediction.category + '\n' +
+          'Score aproximado: ' + info.samplePrediction.confidence;
       } catch (err) {
         mlReportOutput.textContent = 'Error al cargar reporte: ' + err.message;
       }

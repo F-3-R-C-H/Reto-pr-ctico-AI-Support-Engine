@@ -13,10 +13,12 @@ El flujo implementado replica en JavaScript/Node.js exactamente el pipeline del 
 2. **Partición estratificada (`train_test_split`)**:
    - Divide el dataset en **80% entrenamiento (`X_train`, `y_train`)** y **20% prueba (`X_test`, `y_test`)** con `test_size=0.2`, `stratify=data["category"]` y semilla fija `random_state=42`.
 3. **Pipeline de Machine Learning (`Pipeline`)**:
-   - `TfidfVectorizer(ngram_range=(1, 2))`: extrae unigramas y bigramas, calcula pesos TF-IDF con suavizado e IDF logarítmico, y normaliza con norma L2.
-   - `LogisticRegression(max_iter=1000)`: entrena un clasificador lineal multinomial (Softmax + regularización L2) hasta 1000 iteraciones.
-4. **Reporte de métricas (`classification_report`)**:
-   - Calcula `precision`, `recall`, `f1-score`, `support` y `accuracy` sobre el 20% de prueba (`npm run train:ml` o `GET /api/ml-report`).
+   - `("tfidf", TfidfVectorizer(ngram_range=(1, 2)))`: extrae unigramas y bigramas, calcula pesos TF-IDF con suavizado e IDF logarítmico, y normaliza con norma L2.
+   - `("classifier", LogisticRegression(max_iter=1000))`: entrena un clasificador lineal multinomial (Softmax + regularización L2) hasta 1000 iteraciones y expone `model.classes_`.
+4. **Evaluación con los 40 registros de prueba (`X_test`, `y_test`)**:
+   - `classification_report(y_test, predictions, zero_division=0)`: calcula `precision`, `recall`, `f1-score`, `support` y `accuracy` sobre los 40 registros (20%).
+   - `confusion_matrix(y_test, predictions, labels=model.classes_)`: genera la matriz de confusión 4x4 tanto en formato NumPy (`[[10 0 0 0] ...]`) como en tabla etiquetada.
+   - `model.predict(new_message)[0]` y `model.predict_proba(new_message).max()`: devuelve la categoría predicha y el **Score aproximado** redondeado a 3 decimales (`npm run train:ml` o `GET /api/ml-report`).
 
 ---
 
@@ -29,7 +31,7 @@ El flujo implementado replica en JavaScript/Node.js exactamente el pipeline del 
   - `tests/test-cases.json`
 - **Responsabilidades:**
   1. Curar y mantener el archivo `tickets.csv` (compatible con Excel) con las dos columnas obligatorias: `message` y `category`.
-  2. Garantizar que las 4 categorías (`ACCESS`, `BUG`, `FEATURE`, `SECURITY`) estén balanceadas (mínimo 25 ejemplos por clase, 100 en total) para que `stratify=data["category"]` funcione de forma óptima.
+  2. Garantizar que las 4 categorías (`ACCESS`, `BUG`, `FEATURE`, `SECURITY`) estén balanceadas (**50 ejemplos por clase, 200 registros en total**) para que `stratify=data["category"]` funcione de forma óptima (160 de entrenamiento / 40 de prueba).
   3. Verificar que los casos normales, ambiguos y adversariales estén representados sin duplicar texto exacto innecesario.
 - **Comando de verificación:**
   ```powershell

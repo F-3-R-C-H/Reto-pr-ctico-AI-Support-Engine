@@ -26,10 +26,13 @@ function loadEngine(mode) {
   return fn;
 }
 
-router.get('/ml-report', (_req, res) => {
+router.get('/ml-report', (req, res) => {
   try {
     const { getMLModelReport } = require('../engines/ml.engine');
-    return res.status(200).json(getMLModelReport());
+    const customMsg = typeof req.query.message === 'string' && req.query.message.trim()
+      ? req.query.message.trim()
+      : null;
+    return res.status(200).json(getMLModelReport(customMsg));
   } catch (err) {
     console.error('[ml-report] Error al obtener reporte ML:', err.message);
     return res.status(500).json({ error: 'No se pudo generar el reporte del modelo ML' });
