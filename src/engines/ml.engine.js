@@ -2,26 +2,34 @@
 
 /**
  * Tercer Camino: Motor de Machine Learning Clásico (DataFrame CSV + TF-IDF + Regresión Logística)
- * Equivalente en JavaScript/Node.js al pipeline de Pandas + Scikit-Learn:
+ * Equivalente en JavaScript/Node.js al pipeline de Pandas + Scikit-Learn del profesor:
  *
  *   data = pd.read_csv("tickets.csv")
  *   X_train, X_test, y_train, y_test = train_test_split(
  *     data["message"], data["category"], test_size=0.2, stratify=data["category"], random_state=42
  *   )
  *   model = Pipeline([
- *     ("vectorizer", TfidfVectorizer(ngram_range=(1, 2))),
+ *     ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
  *     ("classifier", LogisticRegression(max_iter=1000))
  *   ])
+ *   model.fit(X_train, y_train)
+ *   predictions = model.predict(X_test)
+ *   print(classification_report(y_test, predictions, zero_division=0))
+ *   print(confusion_matrix(y_test, predictions, labels=model.classes_))
+ *   new_message = ["Encontré datos de otros clientes"]
+ *   category = model.predict(new_message)[0]
+ *   confidence = model.predict_proba(new_message).max()
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_CSV_PATH = path.join(__dirname, '..', '..', 'tickets.csv');
+const DEFAULT_SAMPLE_MESSAGE = 'Encontré datos de otros clientes';
 
 const CRITICAL_SECURITY_PATTERNS = [
   /\b(fuga|filtracion|robo|exposicion) de (datos|informacion|credenciales)\b/,
-  /\b(datos|informacion|credenciales) (filtrados|expuestos|robados)\b/,
+  /\b(datos|informacion|credenciales) (filtrados|expuestos|robados|de otros clientes)\b/,
   /\b(vulnerabilidad|brecha) (activa|explotada|explotable|critica)\b/,
   /\b(acceso no autorizado|hackeo|hackeado|malware|ransomware|inyeccion sql|sql injection|xss)\b/,
   /\bcontrasena expuesta\b/,
@@ -349,6 +357,25 @@ class TfidfVectorizer {
 }
 
 /**
+ * Helper sobre matrices de probabilidades para emular `model.predict_proba(new_message).max()` de NumPy
+ */
+function attachProbabilityHelpers(matrix) {
+  Object.defineProperty(matrix, 'max', {
+    value: function max() {
+      let maxVal = 0;
+      for (const row of matrix) {
+        for (const val of row) {
+          if (val > maxVal) maxVal = val;
+        }
+      }
+      return maxVal;
+    },
+    enumerable: false,
+  });
+  return matrix;
+}
+
+/**
  * Equivalente a `sklearn.linear_model.LogisticRegression(max_iter=1000)` (Multinomial Softmax + regularización L2)
  */
 class LogisticRegression {
@@ -357,6 +384,7 @@ class LogisticRegression {
     this.learningRate = learningRate;
     this.regLambda = regLambda;
     this.classes = [];
+    this.classes_ = [];
     this.weights = [];
     this.biases = [];
   }
@@ -370,6 +398,7 @@ class LogisticRegression {
 
   fit(X, y) {
     this.classes = Array.from(new Set(y)).sort();
+    this.classes_ = this.classes;
     const numClasses = this.classes.length;
     const numSamples = X.length;
     const numFeatures = X[0] ? X[0].length : 0;
@@ -441,7 +470,7 @@ class LogisticRegression {
     const numClasses = this.classes.length;
     const numFeatures = this.weights[0] ? this.weights[0].length : 0;
 
-    return X.map((x) => {
+    const matrix = X.map((x) => {
       const logits = new Array(numClasses);
       for (let c = 0; c < numClasses; c++) {
         let dot = this.biases[c];
@@ -453,6 +482,7 @@ class LogisticRegression {
       }
       return this.softmax(logits);
     });
+    return attachProbabilityHelpers(matrix);
   }
 
   predict(X) {
@@ -468,11 +498,16 @@ class LogisticRegression {
 }
 
 /**
- * Equivalente a `sklearn.pipeline.Pipeline`
+ * Equivalente a `sklearn.pipeline.Pipeline` (expone `model.classes_`)
  */
 class Pipeline {
   constructor(steps) {
     this.steps = steps;
+  }
+
+  get classes_() {
+    const [, estimator] = this.steps[this.steps.length - 1];
+    return estimator.classes_ || estimator.classes || [];
   }
 
   fit(X, y) {
@@ -508,9 +543,9 @@ class Pipeline {
 }
 
 /**
- * Equivalente a `sklearn.metrics.classification_report`
+ * Equivalente a `sklearn.metrics.classification_report(y_test, predictions, zero_division=0)`
  */
-function classification_report(y_true, y_pred) {
+function classification_report(y_true, y_pred, { zero_division = 0 } = {}) {
   const labels = Array.from(new Set([...y_true, ...y_pred])).sort();
   const perClass = {};
   let correct = 0;
@@ -528,14 +563,14 @@ function classification_report(y_true, y_pred) {
       else if (y_true[i] !== label && y_pred[i] === label) fp++;
       else if (y_true[i] === label && y_pred[i] !== label) fn++;
     }
-    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-    const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+    const precision = tp + fp > 0 ? tp / (tp + fp) : zero_division;
+    const recall = tp + fn > 0 ? tp / (tp + fn) : zero_division;
+    const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : zero_division;
     const support = tp + fn;
     perClass[label] = { precision, recall, f1, support };
   }
 
-  const accuracy = y_true.length > 0 ? correct / y_true.length : 0;
+  const accuracy = y_true.length > 0 ? correct / y_true.length : zero_division;
 
   const lines = [];
   lines.push('              precision    recall  f1-score   support');
@@ -557,10 +592,56 @@ function classification_report(y_true, y_pred) {
   };
 }
 
+/**
+ * Equivalente a `sklearn.metrics.confusion_matrix(y_test, predictions, labels=model.classes_)`
+ */
+function confusion_matrix(y_true, y_pred, { labels = null } = {}) {
+  const orderedLabels = labels
+    ? Array.from(labels)
+    : Array.from(new Set([...y_true, ...y_pred])).sort();
+  const n = orderedLabels.length;
+  const labelToIdx = new Map(orderedLabels.map((l, idx) => [l, idx]));
+  const matrix = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  for (let i = 0; i < y_true.length; i++) {
+    const r = labelToIdx.get(y_true[i]);
+    const c = labelToIdx.get(y_pred[i]);
+    if (r !== undefined && c !== undefined) {
+      matrix[r][c]++;
+    }
+  }
+
+  const numpyStyleLines = matrix.map((row, idx) => {
+    const inner = row.map((v) => String(v).padStart(2)).join(' ');
+    const prefix = idx === 0 ? '[[' : ' [';
+    const suffix = idx === matrix.length - 1 ? ']]' : ']';
+    return `${prefix}${inner}${suffix}`;
+  });
+
+  const colHeader =
+    'Real \\ Pred'.padStart(12) +
+    orderedLabels.map((l) => l.padStart(10)).join('');
+  const tableRows = matrix.map(
+    (row, idx) =>
+      orderedLabels[idx].padStart(12) +
+      row.map((v) => String(v).padStart(10)).join('')
+  );
+
+  return {
+    labels: orderedLabels,
+    matrix,
+    numpyText: numpyStyleLines.join('\n'),
+    tableText: [colHeader, ...tableRows].join('\n'),
+  };
+}
+
 let cachedPipelineState = null;
 
 /**
- * Entrena el pipeline a partir de `tickets.csv` siguiendo exactamente el flujo del profesor.
+ * Entrena y evalúa el pipeline a partir de `tickets.csv` siguiendo exactamente el código del profesor:
+ * - Entrena en el 80% (`X_train`, `y_train`)
+ * - Evalúa en los otros 40 registros del 20% (`X_test`, `y_test`) con `classification_report` y `confusion_matrix`
+ * - Prueba un mensaje nuevo con `predict` y `predict_proba(...).max()`
  */
 function trainModelFromCSV(csvPath = DEFAULT_CSV_PATH) {
   const data = pd.read_csv(csvPath);
@@ -573,18 +654,25 @@ function trainModelFromCSV(csvPath = DEFAULT_CSV_PATH) {
     random_state: 42,
   });
 
-  // Evaluamos primero en la partición 80/20 para generar el classification_report
+  // 1. Modelo entrenado con el 80% (160 registros) y evaluado con los otros 40 registros (20%)
   const evalModel = new Pipeline([
-    ['vectorizer', new TfidfVectorizer({ ngram_range: [1, 2] })],
+    ['tfidf', new TfidfVectorizer({ ngram_range: [1, 2] })],
     ['classifier', new LogisticRegression({ max_iter: 1000 })],
   ]);
   evalModel.fit(X_train, y_train);
-  const y_pred = evalModel.predict(X_test);
-  const report = classification_report(y_test, y_pred);
 
-  // Entrenamos el modelo de inferencia con el dataset completo de tickets.csv
+  const predictions = evalModel.predict(X_test);
+  const report = classification_report(y_test, predictions, { zero_division: 0 });
+  const confMatrix = confusion_matrix(y_test, predictions, { labels: evalModel.classes_ });
+
+  // Predicción de ejemplo del profesor sobre el modelo entrenado con X_train
+  const new_message = [DEFAULT_SAMPLE_MESSAGE];
+  const sampleCategory = evalModel.predict(new_message)[0];
+  const sampleConfidence = Number(evalModel.predict_proba(new_message).max().toFixed(3));
+
+  // 2. Modelo de producción para el endpoint API (entrenado con todos los registros de tickets.csv)
   const model = new Pipeline([
-    ['vectorizer', new TfidfVectorizer({ ngram_range: [1, 2] })],
+    ['tfidf', new TfidfVectorizer({ ngram_range: [1, 2] })],
     ['classifier', new LogisticRegression({ max_iter: 1000 })],
   ]);
   model.fit(messages, categories);
@@ -593,11 +681,17 @@ function trainModelFromCSV(csvPath = DEFAULT_CSV_PATH) {
     model,
     evalModel,
     report,
+    confMatrix,
+    samplePrediction: {
+      message: DEFAULT_SAMPLE_MESSAGE,
+      category: sampleCategory,
+      confidence: sampleConfidence,
+    },
     datasetSize: messages.length,
     trainSize: X_train.length,
     testSize: X_test.length,
     classCounts: data.valueCounts('category'),
-    vocabSize: model.steps[0][1].vocabulary.size,
+    vocabSize: evalModel.steps[0][1].vocabulary.size,
   };
 
   return cachedPipelineState;
@@ -608,6 +702,30 @@ function getTrainedState() {
     return trainModelFromCSV(DEFAULT_CSV_PATH);
   }
   return cachedPipelineState;
+}
+
+/**
+ * Predice categoría y score de confianza (`predict_proba(new_message).max()`) igual que en Scikit-Learn
+ */
+function predictWithConfidence(message, { useEvalModel = false } = {}) {
+  const state = getTrainedState();
+  const targetModel = useEvalModel ? state.evalModel : state.model;
+  const new_message = [message];
+  const category = targetModel.predict(new_message)[0];
+  const probsMatrix = targetModel.predict_proba(new_message);
+  const confidence = Number(probsMatrix.max().toFixed(3));
+
+  const probabilities = {};
+  targetModel.classes_.forEach((cls, idx) => {
+    probabilities[cls] = Number(probsMatrix[0][idx].toFixed(3));
+  });
+
+  return {
+    message,
+    category,
+    confidence,
+    probabilities,
+  };
 }
 
 function inferPriority(category, rawMessage) {
@@ -632,10 +750,9 @@ function inferPriority(category, rawMessage) {
 
 /**
  * Clasifica un mensaje de soporte usando el Pipeline de Machine Learning (TF-IDF + LogisticRegression)
- * entrenado con `tickets.csv`, y devuelve el contrato estándar de la API.
+ * entrenado con `tickets.csv`, y devuelve el contrato estándar de la API junto con el `confidence` score.
  */
 async function analyzeML(message) {
-  const state = getTrainedState();
   const cleanText = normalizeText(message);
 
   if (!cleanText) {
@@ -645,50 +762,75 @@ async function analyzeML(message) {
       response: RESPONSES.BUG.LOW,
       requiresHumanReview: true,
       mode: 'ml',
+      confidence: 0,
     };
   }
 
-  const [predictedCategory] = state.model.predict([message]);
-  const category = predictedCategory || 'BUG';
+  const pred = predictWithConfidence(message);
+  const category = pred.category || 'BUG';
   const priority = inferPriority(category, message);
+  const baseResponse = RESPONSES[category][priority];
 
   return {
     category,
     priority,
-    response: RESPONSES[category][priority],
+    response: `${baseResponse} (Score ML: ${pred.confidence})`,
     requiresHumanReview: category === 'SECURITY',
     mode: 'ml',
+    confidence: pred.confidence,
+    probabilities: pred.probabilities,
   };
 }
 
-function getMLModelReport() {
+function getMLModelReport(customMessage = null) {
   const state = getTrainedState();
+  const sample = customMessage
+    ? predictWithConfidence(customMessage, { useEvalModel: true })
+    : state.samplePrediction;
+
   return {
     datasetFile: 'tickets.csv',
     datasetSize: state.datasetSize,
     trainSize: state.trainSize,
     testSize: state.testSize,
     vocabSize: state.vocabSize,
+    classes: state.evalModel.classes_,
     classCounts: state.classCounts,
     accuracy: state.report.accuracy,
     perClass: state.report.perClass,
     classificationReport: state.report.text,
+    confusionMatrix: state.confMatrix.matrix,
+    confusionMatrixText: state.confMatrix.numpyText,
+    confusionMatrixTable: state.confMatrix.tableText,
+    samplePrediction: sample,
   };
 }
 
 if (require.main === module) {
-  const info = getMLModelReport();
+  const customMsg = process.argv.slice(2).join(' ').trim() || null;
+  const info = getMLModelReport(customMsg);
+
   console.log('====================================================================');
-  console.log('  ENTRENAMIENTO DEL MODELO ML (TF-IDF + LogisticRegression)');
+  console.log('  EVALUACIÓN DEL MODELO ML CON LOS 40 REGISTROS DE PRUEBA (20%)');
   console.log('====================================================================');
   console.log(`Archivo CSV:            ${info.datasetFile}`);
-  console.log(`Total de registros:     ${info.datasetSize} (Train 80%: ${info.trainSize} | Test 20%: ${info.testSize})`);
-  console.log(`Distribución por clase: ${JSON.stringify(info.classCounts)}`);
-  console.log(`N-gramas (1, 2) vocab:  ${info.vocabSize} términos`);
+  console.log(`Partición estratificada: Total ${info.datasetSize} -> X_train: ${info.trainSize} (80%) | X_test: ${info.testSize} (20%)`);
+  console.log(`Clases (model.classes_): [${info.classes.join(', ')}]`);
   console.log('--------------------------------------------------------------------');
-  console.log('Reporte de Clasificación (Test Set 20%, stratify=category, seed=42):');
+  console.log('1) classification_report(y_test, predictions, zero_division=0):');
   console.log('--------------------------------------------------------------------');
   console.log(info.classificationReport);
+  console.log('--------------------------------------------------------------------');
+  console.log('2) confusion_matrix(y_test, predictions, labels=model.classes_):');
+  console.log('--------------------------------------------------------------------');
+  console.log(info.confusionMatrixText);
+  console.log('\nDetalle de Matriz de Confusión (Filas = Real, Columnas = Predicción):');
+  console.log(info.confusionMatrixTable);
+  console.log('--------------------------------------------------------------------');
+  console.log(`3) Predicción de mensaje nuevo: ["${info.samplePrediction.message}"]`);
+  console.log('--------------------------------------------------------------------');
+  console.log(`Categoría: ${info.samplePrediction.category}`);
+  console.log(`Score aproximado: ${info.samplePrediction.confidence}`);
   console.log('====================================================================');
 }
 
@@ -697,10 +839,12 @@ module.exports = {
   analyzeML,
   trainModelFromCSV,
   getMLModelReport,
+  predictWithConfidence,
   pd,
   train_test_split,
   TfidfVectorizer,
   LogisticRegression,
   Pipeline,
   classification_report,
+  confusion_matrix,
 };

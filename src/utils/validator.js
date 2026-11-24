@@ -1,6 +1,6 @@
 const CATEGORIES = ['ACCESS', 'BUG', 'FEATURE', 'SECURITY'];
 const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
-const MODES = ['traditional', 'generative'];
+const MODES = ['traditional', 'generative', 'ml'];
 const MAX_MESSAGE_LENGTH = 2000;
 
 /**
@@ -61,7 +61,7 @@ function validateEngineOutput(result, mode) {
     fail('requiresHumanReview debe ser booleano');
   }
 
-  return {
+  const output = {
     category: result.category,
     priority: result.priority,
     response: result.response.trim(),
@@ -69,6 +69,12 @@ function validateEngineOutput(result, mode) {
     requiresHumanReview: result.category === 'SECURITY' ? true : result.requiresHumanReview,
     mode, // el modo siempre es el solicitado y ya validado
   };
+
+  if (typeof result.confidence === 'number' && Number.isFinite(result.confidence)) {
+    output.confidence = Number(result.confidence.toFixed(3));
+  }
+
+  return output;
 }
 
 module.exports = {
